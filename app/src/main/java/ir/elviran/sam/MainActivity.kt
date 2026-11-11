@@ -74,6 +74,7 @@ private fun SamHomeScreen() {
 
     var recognizer by remember { mutableStateOf<SpeechRecognizer?>(null) }
     var tts by remember { mutableStateOf<TextToSpeech?>(null) }
+    var assistantReply by remember { mutableStateOf("") }
 
     val permissionLauncher =
         rememberLauncherForActivityResult(
