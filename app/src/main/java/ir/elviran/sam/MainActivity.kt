@@ -1,4 +1,3 @@
-
 package ir.elviran.sam
 
 import android.Manifest
@@ -21,8 +20,10 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedTextField
@@ -41,13 +42,15 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import ir.elviran.sam.ai.SamCommandProcessor
 import ir.elviran.sam.ui.theme.SamTheme
 import java.util.Locale
-import ir.elviran.sam.ai.SamCommandProcessor
 
 class MainActivity : ComponentActivity() {
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         setContent {
             SamTheme {
                 Surface(
@@ -63,57 +66,124 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun SamHomeScreen() {
+
     val context = LocalContext.current
 
     var transcript by remember { mutableStateOf("") }
     var partialText by remember { mutableStateOf("") }
+    var assistantReply by remember { mutableStateOf("") }
+
     var status by remember { mutableStateOf("آماده") }
     var listening by remember { mutableStateOf(false) }
+    var processing by remember { mutableStateOf(false) }
+
     var ttsReady by remember { mutableStateOf(false) }
     var faVoiceAvailable by remember { mutableStateOf(false) }
 
-    var recognizer by remember { mutableStateOf<SpeechRecognizer?>(null) }
-    var tts by remember { mutableStateOf<TextToSpeech?>(null) }
-    var assistantReply by remember { mutableStateOf("") }
+    var recognizer by remember {
+        mutableStateOf<SpeechRecognizer?>(null)
+    }
+
+    var tts by remember {
+        mutableStateOf<TextToSpeech?>(null)
+    }
+
+    fun speakReply(reply: String) {
+
+        if (!ttsReady) {
+            status = "پاسخ آماده شد؛ موتور گفتار هنوز آماده نیست"
+            return
+        }
+
+        if (!faVoiceAvailable) {
+            status = "پاسخ آماده شد؛ صدای فارسی نصب نیست"
+            return
+        }
+
+        val result = tts?.speak(
+            reply,
+            TextToSpeech.QUEUE_FLUSH,
+            null,
+            "sam-reply"
+        )
+
+        status = if (result == TextToSpeech.SUCCESS) {
+            "سام در حال پاسخ‌گویی است"
+        } else {
+            "پاسخ آماده شد؛ پخش صدا ناموفق بود"
+        }
+    }
+
+    fun processMessage(message: String) {
+
+        if (message.isBlank()) {
+            status = "متنی برای پردازش وجود ندارد"
+            return
+        }
+
+        processing = true
+        status = "در حال پردازش درخواست..."
+
+        try {
+            val reply = SamCommandProcessor.respond(message)
+
+            assistantReply = reply
+            processing = false
+
+            speakReply(reply)
+
+        } catch (exception: Exception) {
+            processing = false
+            assistantReply = "هنگام پردازش درخواست مشکلی پیش آمد."
+            status = "خطا در پردازش درخواست"
+        }
+    }
 
     val permissionLauncher =
         rememberLauncherForActivityResult(
             ActivityResultContracts.RequestPermission()
         ) { granted ->
+
             if (granted) {
-                val intent = createRecognitionIntent()
-                recognizer?.startListening(intent)
-                listening = recognizer != null
-                status = if (recognizer != null) {
-                    "در حال آماده‌سازی میکروفون"
+
+                val speech = recognizer
+
+                if (speech != null) {
+                    status = "در حال شروع..."
+                    speech.startListening(createRecognitionIntent())
                 } else {
-                    "سرویس تشخیص گفتار در دسترس نیست"
+                    status = "سرویس تشخیص گفتار در دسترس نیست"
                 }
+
             } else {
                 status = "مجوز میکروفون داده نشد"
             }
         }
 
-    // Text-to-Speech lifecycle
+    // Text to Speech
     DisposableEffect(context) {
-        lateinit var engine: TextToSpeech
 
-        engine = TextToSpeech(context) { result ->
+        val engine = TextToSpeech(context) { result ->
+
             if (result == TextToSpeech.SUCCESS) {
+
                 val languageResult =
-                    engine.setLanguage(Locale.forLanguageTag("fa-IR"))
+                    tts?.setLanguage(Locale.forLanguageTag("fa-IR"))
+                        ?: TextToSpeech.LANG_NOT_SUPPORTED
 
                 faVoiceAvailable =
                     languageResult >= TextToSpeech.LANG_AVAILABLE
 
                 ttsReady = true
 
-                if (faVoiceAvailable) {
-                    status = "موتور گفتار آماده است"
+                status = if (faVoiceAvailable) {
+                    "موتور گفتار فارسی آماده است"
                 } else {
-                    status = "صدای فارسی نصب نیست"
+                    "صدای فارسی نصب نیست"
                 }
+
             } else {
+
                 ttsReady = false
                 faVoiceAvailable = false
                 status = "راه‌اندازی موتور گفتار ناموفق بود"
@@ -126,18 +196,25 @@ private fun SamHomeScreen() {
             engine.stop()
             engine.shutdown()
             tts = null
+            ttsReady = false
         }
     }
 
-    // Speech recognition lifecycle
+    // Speech Recognition
     DisposableEffect(context) {
+
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
+
             status = "سرویس تشخیص گفتار در دستگاه موجود نیست"
+
         } else {
-            val speech = SpeechRecognizer.createSpeechRecognizer(context)
+
+            val speech =
+                SpeechRecognizer.createSpeechRecognizer(context)
 
             speech.setRecognitionListener(
                 object : RecognitionListener {
+
                     override fun onReadyForSpeech(params: Bundle?) {
                         listening = true
                         status = "گوش می‌دهم..."
@@ -157,10 +234,12 @@ private fun SamHomeScreen() {
                     }
 
                     override fun onError(error: Int) {
+
                         listening = false
                         partialText = ""
 
                         status = when (error) {
+
                             SpeechRecognizer.ERROR_AUDIO ->
                                 "خطا در دریافت صدا"
 
@@ -189,6 +268,7 @@ private fun SamHomeScreen() {
                     }
 
                     override fun onResults(results: Bundle?) {
+
                         listening = false
                         partialText = ""
 
@@ -198,18 +278,26 @@ private fun SamHomeScreen() {
                             )?.firstOrNull().orEmpty()
 
                         if (recognized.isNotBlank()) {
+
+                            val cleanText = recognized.trim()
+
                             transcript = listOf(
                                 transcript.trim(),
-                                recognized.trim()
-                            ).filter { it.isNotBlank() }.joinToString("\n")
+                                cleanText
+                            ).filter {
+                                it.isNotBlank()
+                            }.joinToString("\n")
 
-                            status = "گفتار به متن تبدیل شد"
+                            processMessage(cleanText)
+
                         } else {
+
                             status = "متنی تشخیص داده نشد"
                         }
                     }
 
                     override fun onPartialResults(results: Bundle?) {
+
                         partialText =
                             results?.getStringArrayList(
                                 SpeechRecognizer.RESULTS_RECOGNITION
@@ -227,8 +315,10 @@ private fun SamHomeScreen() {
         }
 
         onDispose {
+
             recognizer?.cancel()
             recognizer?.destroy()
+
             recognizer = null
             listening = false
         }
@@ -246,21 +336,30 @@ private fun SamHomeScreen() {
                     )
                 )
             )
-            .padding(horizontal = 20.dp, vertical = 24.dp),
+            .verticalScroll(rememberScrollState())
+            .padding(
+                horizontal = 20.dp,
+                vertical = 24.dp
+            ),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+
+        // Header
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
+
             Column(horizontalAlignment = Alignment.End) {
+
                 Text(
                     "SAM",
                     color = Color(0xFFE4EEF0),
                     fontSize = 22.sp,
                     fontWeight = FontWeight.Bold
                 )
+
                 Text(
                     "دستیار هوشمند شخصی",
                     color = Color(0xFF91A5B1),
@@ -273,7 +372,7 @@ private fun SamHomeScreen() {
 
         Spacer(Modifier.height(22.dp))
 
-        VoiceOrb(listening)
+        VoiceOrb(listening || processing)
 
         Text(
             "سلام، من سام هستم",
@@ -293,12 +392,13 @@ private fun SamHomeScreen() {
 
         Spacer(Modifier.height(18.dp))
 
+        // Conversation input
         OutlinedTextField(
             value = transcript,
-            onValueChange = { transcript = it },
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f, fill = false),
+            onValueChange = {
+                transcript = it
+            },
+            modifier = Modifier.fillMaxWidth(),
             minLines = 4,
             maxLines = 8,
             label = {
@@ -317,7 +417,9 @@ private fun SamHomeScreen() {
         )
 
         if (partialText.isNotBlank()) {
-            Spacer(Modifier.height(6.dp))
+
+            Spacer(Modifier.height(8.dp))
+
             Text(
                 "در حال تشخیص: $partialText",
                 color = Color(0xFF75D5D6),
@@ -327,17 +429,63 @@ private fun SamHomeScreen() {
 
         Spacer(Modifier.height(14.dp))
 
+        // Assistant reply
+        if (assistantReply.isNotBlank()) {
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        Color(0xFF12212A),
+                        RoundedCornerShape(16.dp)
+                    )
+                    .border(
+                        1.dp,
+                        Color(0xFF29404D),
+                        RoundedCornerShape(16.dp)
+                    )
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.End
+            ) {
+
+                Text(
+                    "پاسخ سام",
+                    color = Color(0xFF75D5D6),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                Text(
+                    assistantReply,
+                    color = Color(0xFFE4EEF0),
+                    fontSize = 15.sp,
+                    textAlign = TextAlign.End,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        // Main buttons
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+
             Button(
                 modifier = Modifier.weight(1f),
                 onClick = {
+
                     if (listening) {
+
                         recognizer?.stopListening()
                         status = "در حال پایان دادن به دریافت صدا..."
+
                     } else {
+
                         val granted =
                             ContextCompat.checkSelfPermission(
                                 context,
@@ -345,16 +493,20 @@ private fun SamHomeScreen() {
                             ) == PackageManager.PERMISSION_GRANTED
 
                         if (granted) {
-                            if (recognizer != null) {
-                                listening = true
+
+                            val speech = recognizer
+
+                            if (speech != null) {
                                 status = "در حال شروع..."
-                                recognizer?.startListening(
+                                speech.startListening(
                                     createRecognitionIntent()
                                 )
                             } else {
                                 status = "سرویس تشخیص گفتار موجود نیست"
                             }
+
                         } else {
+
                             permissionLauncher.launch(
                                 Manifest.permission.RECORD_AUDIO
                             )
@@ -365,33 +517,23 @@ private fun SamHomeScreen() {
                     containerColor = Color(0xFF236C82)
                 )
             ) {
-                Text(if (listening) "توقف" else "شروع مکالمه")
+
+                Text(
+                    if (listening) "توقف" else "شروع مکالمه"
+                )
             }
 
             Button(
                 modifier = Modifier.weight(1f),
                 onClick = {
-                    if (transcript.isBlank()) {
-                        status = "متنی برای خواندن وجود ندارد"
-                    } else if (!ttsReady) {
-                        status = "موتور گفتار هنوز آماده نیست"
-                    } else if (!faVoiceAvailable) {
-                        status = "صدای فارسی روی دستگاه نصب نیست"
-                    } else {
-                        tts?.speak(
-                            transcript,
-                            TextToSpeech.QUEUE_FLUSH,
-                            null,
-                            "sam-persian-utterance"
-                        )
-                        status = "در حال خواندن متن"
-                    }
+                    processMessage(transcript)
                 },
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color(0xFF244A43)
                 )
             ) {
-                Text("خواندن متن")
+
+                Text("ارسال به سام")
             }
         }
 
@@ -401,23 +543,28 @@ private fun SamHomeScreen() {
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+
             Button(
                 modifier = Modifier.weight(1f),
                 onClick = {
-                    transcript = ""
-                    partialText = ""
-                    status = "متن پاک شد"
+
+                    if (assistantReply.isNotBlank()) {
+                        speakReply(assistantReply)
+                    } else {
+                        status = "هنوز پاسخی برای خواندن وجود ندارد"
+                    }
                 },
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF34404A)
+                    containerColor = Color(0xFF244A43)
                 )
             ) {
-                Text("پاک کردن متن")
+                Text("خواندن پاسخ")
             }
 
             Button(
                 modifier = Modifier.weight(1f),
                 onClick = {
+
                     tts?.stop()
                     status = "پخش صدا متوقف شد"
                 },
@@ -429,11 +576,31 @@ private fun SamHomeScreen() {
             }
         }
 
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(8.dp))
+
+        Button(
+            modifier = Modifier.fillMaxWidth(),
+            onClick = {
+
+                transcript = ""
+                partialText = ""
+                assistantReply = ""
+
+                tts?.stop()
+
+                status = "مکالمه پاک شد"
+            },
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color(0xFF34404A)
+            )
+        ) {
+            Text("پاک کردن مکالمه")
+        }
+
+        Spacer(Modifier.height(18.dp))
 
         Text(
-            "تشخیص گفتار ممکن است به سرویس آنلاین دستگاه وابسته باشد. " +
-                "این نسخه هنوز موتور پاسخ‌گوی هوش مصنوعی ندارد.",
+            "موتور پردازش محلی فعال است. قابلیت‌های هوش مصنوعی آنلاین و فرمان‌های کارخانه‌ای هنوز به این نسخه متصل نشده‌اند.",
             color = Color(0xFF718792),
             fontSize = 10.sp,
             textAlign = TextAlign.Center
@@ -442,21 +609,41 @@ private fun SamHomeScreen() {
 }
 
 private fun createRecognitionIntent(): Intent {
-    return Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+
+    return Intent(
+        RecognizerIntent.ACTION_RECOGNIZE_SPEECH
+    ).apply {
+
         putExtra(
             RecognizerIntent.EXTRA_LANGUAGE_MODEL,
             RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
         )
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE, "fa-IR")
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "fa-IR")
-        putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, false)
-        putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+
+        putExtra(
+            RecognizerIntent.EXTRA_LANGUAGE,
+            "fa-IR"
+        )
+
+        putExtra(
+            RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE,
+            "fa-IR"
+        )
+
+        putExtra(
+            RecognizerIntent.EXTRA_PARTIAL_RESULTS,
+            true
+        )
+
+        putExtra(
+            RecognizerIntent.EXTRA_MAX_RESULTS,
+            3
+        )
     }
 }
 
 @Composable
 private fun StatusPill(status: String) {
+
     Row(
         modifier = Modifier
             .border(
@@ -468,15 +655,25 @@ private fun StatusPill(status: String) {
                 Color(0xFF12212A),
                 RoundedCornerShape(50)
             )
-            .padding(horizontal = 10.dp, vertical = 7.dp),
+            .padding(
+                horizontal = 10.dp,
+                vertical = 7.dp
+            ),
         verticalAlignment = Alignment.CenterVertically
     ) {
+
         Box(
             Modifier
                 .size(7.dp)
                 .background(
-                    if (status.contains("گوش")) Color(0xFF65D6A5)
-                    else Color(0xFFE6A85C),
+                    if (
+                        status.contains("گوش") ||
+                        status.contains("دریافت")
+                    ) {
+                        Color(0xFF65D6A5)
+                    } else {
+                        Color(0xFFE6A85C)
+                    },
                     CircleShape
                 )
         )
@@ -491,7 +688,9 @@ private fun StatusPill(status: String) {
 
 @Composable
 private fun VoiceOrb(active: Boolean) {
-    val transition = rememberInfiniteTransition(label = "sam-orb")
+
+    val transition =
+        rememberInfiniteTransition(label = "sam-orb")
 
     val pulse by transition.animateFloat(
         initialValue = 0.94f,
@@ -509,6 +708,7 @@ private fun VoiceOrb(active: Boolean) {
         modifier = Modifier.size(190.dp),
         contentAlignment = Alignment.Center
     ) {
+
         Box(
             Modifier
                 .size(180.dp)
@@ -545,6 +745,7 @@ private fun VoiceOrb(active: Boolean) {
                 ),
             contentAlignment = Alignment.Center
         ) {
+
             Box(
                 Modifier
                     .size(82.dp)
