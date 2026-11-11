@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import ir.elviran.sam.ui.theme.SamTheme
 import java.util.Locale
+import ir.elviran.sam.ai.SamCommandProcessor
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
